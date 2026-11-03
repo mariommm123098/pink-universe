@@ -1,0 +1,69 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><base href="/"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg"><title>渲染与资源检查</title><style>body{margin:0;background:#09040c;color:#f1c4d8;font:12px system-ui}canvas{position:fixed;inset:0;width:100%;height:100%}aside{position:fixed;z-index:2;top:20px;left:20px;max-width:440px;background:#100914da;padding:18px;border-radius:12px}button{background:#efbdd4;color:#27101d;border:0;border-radius:20px;padding:9px 20px;cursor:pointer}pre{white-space:pre-wrap;line-height:1.8}h1{font-size:14px;font-weight:400}.pass{color:#c1dfbc}.fail{color:#ff929f}</style><canvas id="canvas"></canvas><aside><h1>渲染、画质与资源检查</h1><button id="run">运行</button><pre id="results">检查正式渲染类；不使用摄像头。</pre></aside><script type="module">
+import {ParticleArt} from '/src/art.js';
+import {loadParticleFont} from '/src/shapes.js';
+const button=document.querySelector('#run'),output=document.querySelector('#results');
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function assert(value,message){if(!value)throw new Error(message);}
+button.onclick=async()=>{
+ button.disabled=true;output.textContent='加载字库…';let art;
+ const lines=[];const pass=message=>{lines.push('PASS · '+message);output.textContent=lines.join('\n');};
+ try{
+  await loadParticleFont();art=new ParticleArt(document.querySelector('#canvas'));art.setQuality('high');art.enter();art.setScene('surprise');await sleep(900);art.setScene('scatter');art.setInputMode('demo');art.setPointer(.1,.1);await sleep(3200);art.setPointer(.8,.2);await sleep(300);
+  let composite;
+  for(const scene of ['love','name','surprise']){
+   art.setScene(scene,{name:'小猫',message:'I 💗 U'});
+   assert(art.mode==='surprise'&&art.fireworkTarget===1&&art.loveWeaveTarget===0,'表白与名字未直接使用最终动效');
+   if(composite)assert(art.target===composite,'表白、名字和惊喜应共享同一组合');
+   composite=art.target;
+  }
+  let upper=0,lower=0;
+  for(let i=0;i<composite.length;i+=3){
+   if(Math.abs(composite[i])<3.25){
+    if(composite[i+1]>.2)upper++;else if(composite[i+1]<-.2)lower++;
+    else assert(false,'上下两排的粒子互相重叠');
+   }
+  }
+  assert(upper>art.count*.35&&lower>art.count*.40,'组合缺少上排表白或下排名字');
+  pass('第一次表白直接采用最终动效；上排 I 💗 U、下排小猫，保留清楚行距');
+  const from=art.geometry.getAttribute('aFrom'),target=art.geometry.getAttribute('aTarget'),index=art.geometry.index;
+  const memory=art.renderer.info.memory.geometries;
+  for(let i=0;i<60;i++){
+   const scene=['three','two','one','love','name','surprise','scatter'][i%7];
+   art.setScene(scene,{name:i%3?'小猫':'一二三四五六七八九十一二',message:i%2?'I ♥ U':'A VERY LONG UNBROKENWORDTHATWRAPSSAFELY'});
+   assert(art.target.every(Number.isFinite)&&art.from.every(Number.isFinite),'目标中存在非有限值');
+   assert(art.geometry.getAttribute('aFrom')===from&&art.geometry.getAttribute('aTarget')===target,'转场更换了 GPU 属性');
+   if(i%10===0)await sleep(16);
+  }
+  pass('60 次中断转场与长中英文字形；坐标有限、GPU 属性持续复用');
+  for(const quality of ['low','high','auto','low','high']){
+   art.setQuality(quality);assert(art.geometry.index===index,'画质切换重新分配索引');
+   const active=quality==='low'?8500:art.count;assert(art.activeCount===active&&art.geometry.drawRange.count===active,'画质粒子数不符');
+   assert(new Set(index.array.slice(0,active)).size===active,'索引重复');
+  }
+  pass('五次画质切换；索引唯一且不重新分配，低画质覆盖整个形状');
+  art.setScene('surprise',{name:'小猫'});await sleep(1500);
+  art.setPointer(.15,.1);await sleep(3400);
+  assert(art.field.charge>.7,'停留未蓄积光场');
+  const serial=art.field.serial;art.setPointer(-.7,-.2);await sleep(350);
+  assert(art.field.serial===serial+1,'移动应恰好释放一次光波');
+  assert(art.stage.uniforms.uWaves.value.some(w=>w.w>.7),'光波未到达花瓣着色器');
+  art.releaseInput();await sleep(500);art.setPointer(.9,.8);await sleep(300);
+  assert(art.field.serial===serial+1,'恢复追踪不应发出额外光波');
+  pass('停留蓄积、移动释放与花瓣光波联动；追踪恢复无误释放');
+  const bloomAge=art.stage.bloomAt;art.setScene('scatter');await sleep(60);art.setScene('surprise');await sleep(60);
+  assert(art.stage.bloomAt===bloomAge,'快速返回惊喜导致花瓣展开突然重置');
+  art.releaseInput();await sleep(1800);
+  pass('快速打断惊喜后继续展开，花瓣与烟花平滑退出和恢复');
+  assert(art.renderer.info.memory.geometries===memory,'几何资源持续增长');
+  assert(art.renderer.info.render.calls<=15,'绘制调用超出预算');
+  const invalid=art.renderer.info.programs.some(program=>program.diagnostics?.runnable===false);assert(!invalid,'着色器编译失败');
+  pass('完整惊喜场景；'+art.renderer.info.render.calls+' 次绘制、'+memory+' 个几何资源、着色器可运行');
+  const start=performance.now();let frames=0,last=start,slow=0;
+  await new Promise(resolve=>{function frame(now){frames++;if(now-last>40)slow++;last=now;if(now-start<2200)requestAnimationFrame(frame);else resolve();}requestAnimationFrame(frame);});
+  const fps=frames/((performance.now()-start)/1000);
+  pass('当前浏览器惊喜场景 '+fps.toFixed(1)+' fps；>40ms 帧 '+slow+'（仅代表测试环境）');
+  output.className='pass';button.textContent='全部通过';
+ }catch(error){output.className='fail';output.textContent=lines.join('\n')+'\nFAIL · '+error.message;console.error(error);}
+ finally{button.disabled=false;art?.dispose();}
+};
+</script></html>

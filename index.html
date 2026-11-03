@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#09040c" />
+  <meta name="description" content="摄像头手势控制的粉色粒子互动作品。" />
+  <title>小猫 · 引力场</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 7h-9A2.5 2.5 0 0 0 3 9.5v7A2.5 2.5 0 0 0 5.5 19h9a2.5 2.5 0 0 0 2.5-2.5v-7A2.5 2.5 0 0 0 14.5 7Z"/><path d="m17 11 4-3v10l-4-3M7 4h5"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 0 1 6 0c0 2-3 2-3 4m0 3v.1"/></symbol>
+      <symbol id="i-hand" viewBox="0 0 40 44"><path d="M11 24V11c0-4 5-4 5 0v11-15c0-4 5-4 5 0v15-13c0-4 5-4 5 0v14-9c0-4 5-4 5 0v16c0 7-4 11-11 11-5 0-7-2-10-6L4 25c-2-4 2-6 5-3l5 5"/></symbol>
+      <symbol id="i-one" viewBox="0 0 40 44"><path d="M14 24V7c0-4 6-4 6 0v17-7c0-4 6-4 6 0v7-4c0-4 6-4 6 0v11c0 7-4 10-11 10-5 0-8-3-11-7l-5-8c-2-4 2-7 5-3l5 6m17-5c3-2 5 0 5 3v4"/></symbol>
+      <symbol id="i-two" viewBox="0 0 40 44"><path d="m12 25-3-17c-1-4 5-5 6-1l4 15 5-17c1-4 7-2 5 2l-4 17v-4c0-4 6-4 6 0v6-2c0-4 5-4 5 0v7c0 7-5 10-12 10-6 0-10-3-13-7l-6-8c-2-3 2-6 5-3l5 5"/></symbol>
+      <symbol id="i-three" viewBox="0 0 40 44"><path d="m10 25-3-15c-1-4 4-5 5-1l4 13V5c0-4 5-4 5 0v17l4-14c1-4 6-3 5 1l-3 17c5-7 9-3 7 2l-3 7c-2 4-6 6-12 6-7 0-10-5-12-10-2-6 2-9 6-5l5 5c3 2 6-1 8-4"/></symbol>
+      <symbol id="i-fist" viewBox="0 0 40 44"><path d="M9 23v-9c0-5 6-5 6-1v9-12c0-5 6-5 6 0v12-10c0-5 6-5 6 0v11-7c0-5 6-5 6 0v13c0 8-4 12-12 12-7 0-10-4-12-8l-4-8c-2-5 3-8 6-4l6 6h8"/></symbol>
+      <symbol id="i-camera-off" viewBox="0 0 24 24"><path d="M3 3 21 21M8 7h6.5A2.5 2.5 0 0 1 17 9.5v4m-2 5H5.5A2.5 2.5 0 0 1 3 16.5v-7c0-.7.3-1.4.8-1.8M17 11l4-3v9"/></symbol>
+    </defs>
+  </svg>
+  <main id="app">
+    <div class="atmosphere" aria-hidden="true"><div class="nebula nebula-one"></div><div class="nebula nebula-two"></div><div class="grain"></div></div>
+    <canvas id="artwork" aria-label="粉色粒子互动场景"></canvas>
+    <div class="edge-vignette" aria-hidden="true"></div>
+
+    <section id="welcome" class="welcome" aria-label="进入互动">
+      <button id="start-button" class="enter-button">进入</button>
+    </section>
+
+    <section id="experience" class="experience" hidden aria-label="互动控件">
+      <nav id="corner-controls" class="corner-controls" aria-label="工具">
+        <button id="demo-badge" class="demo-badge" hidden aria-label="演示模式，打开操作帮助">演示</button>
+        <button id="camera-button" class="icon-button" aria-label="关闭摄像头" title="关闭摄像头" aria-pressed="false"><svg class="icon"><use href="#i-camera"/></svg></button>
+        <button id="help-button" class="icon-button" aria-label="手势帮助" title="手势帮助"><svg class="icon"><use href="#i-help"/></svg></button>
+        <button id="settings-button" class="icon-button" aria-label="设置" title="设置"><svg class="icon"><use href="#i-settings"/></svg></button>
+      </nav>
+      <aside id="camera-preview" class="camera-preview" hidden aria-label="摄像头预览">
+        <video id="camera-video" autoplay muted playsinline aria-label="镜像摄像头画面"></video>
+        <canvas id="hand-overlay" class="hand-overlay" aria-hidden="true"></canvas>
+        <button id="hide-preview" class="preview-close icon-button" aria-label="隐藏预览" title="隐藏预览"><svg class="icon"><use href="#i-close"/></svg></button>
+      </aside>
+    </section>
+    <button id="restore-ui" class="restore-ui icon-button" hidden aria-label="显示控件" title="显示控件 · H"><svg class="icon"><use href="#i-eye"/></svg></button>
+
+    <div id="loading-overlay" class="overlay centered-overlay" hidden>
+      <section class="loading-state" role="status" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <p id="loading-text">请允许使用摄像头，画面仅在本机处理。</p>
+        <button id="cancel-camera" class="quiet-button">演示模式</button>
+      </section>
+    </div>
+
+    <div id="error-overlay" class="overlay centered-overlay" hidden>
+      <section class="error-dialog panel" role="alertdialog" aria-labelledby="error-title" aria-describedby="error-message" aria-modal="true">
+        <button class="panel-close icon-button" data-close="error-overlay" aria-label="关闭提示"><svg class="icon"><use href="#i-close"/></svg></button>
+        <h2 id="error-title">摄像头不可用</h2>
+        <p id="error-message">连接摄像头后重试，或使用演示模式。</p>
+        <div class="error-actions"><button id="retry-camera" class="action-button">重试</button><button id="error-demo" class="quiet-button">演示模式</button></div>
+      </section>
+    </div>
+
+    <div id="settings-overlay" class="overlay corner-overlay" hidden>
+      <section class="panel settings-panel" role="dialog" aria-labelledby="settings-title" aria-modal="true">
+        <button class="panel-close icon-button" data-close="settings-overlay" aria-label="关闭设置"><svg class="icon"><use href="#i-close"/></svg></button>
+        <h2 id="settings-title">设置</h2>
+        <form id="settings-form">
+          <label class="field-label" for="name-input">名字</label><input id="name-input" name="name" value="小猫" maxlength="24" required autocomplete="off" />
+          <label class="field-label" for="message-input">文字</label><input id="message-input" name="message" value="I ♥ U" maxlength="72" required autocomplete="off" />
+          <div class="setting-row"><label for="quality-input">画质</label><select id="quality-input"><option value="auto">自动</option><option value="high">细腻</option><option value="low">低功耗</option></select></div>
+          <div class="setting-row"><span id="camera-setting-label">摄像头</span><button type="button" id="camera-setting" class="switch" role="switch" aria-checked="false" aria-labelledby="camera-setting-label"><span></span></button></div>
+          <div class="setting-row"><span id="preview-setting-label">预览</span><button type="button" id="preview-setting" class="switch" role="switch" aria-checked="true" aria-labelledby="preview-setting-label"><span></span></button></div>
+          <div class="setting-row"><span id="demo-setting-label">演示模式</span><button type="button" id="demo-setting" class="switch" role="switch" aria-checked="false" aria-labelledby="demo-setting-label"><span></span></button></div>
+          <div class="setting-row"><span id="sound-setting-label">声音</span><button type="button" id="sound-button" class="switch" role="switch" aria-checked="false" aria-labelledby="sound-setting-label"><span></span></button></div>
+          <div class="setting-row compact-actions"><button type="button" id="fullscreen-button" class="quiet-button"><svg class="icon"><use href="#i-expand"/></svg>全屏</button><button type="button" id="hide-ui" class="quiet-button"><svg class="icon"><use href="#i-eye"/></svg>隐藏控件</button></div>
+          <button class="action-button save-button" type="submit">保存</button>
+        </form>
+      </section>
+    </div>
+
+    <div id="help-overlay" class="overlay corner-overlay" hidden>
+      <section class="panel help-panel" role="dialog" aria-labelledby="help-title" aria-modal="true">
+        <button class="panel-close icon-button" data-close="help-overlay" aria-label="关闭帮助"><svg class="icon"><use href="#i-close"/></svg></button>
+        <h2 id="help-title">手势</h2>
+        <div class="gesture-list" role="group" aria-label="手势与演示操作">
+          <button class="gesture-row" data-gesture="open" aria-label="张开手掌，散开"><svg class="hand-icon"><use href="#i-hand"/></svg><span>散开</span><kbd>0</kbd></button>
+          <button class="gesture-row three-row" data-gesture="three" aria-label="数字 3：拇指、小指弯曲相扣，指尖靠拢；食指、中指、无名指伸直张开"><svg class="hand-icon"><use href="#i-three"/></svg><span>3 <small>拇、小指弯曲相扣，指尖靠拢；<br/>食、中、无名指伸直张开。</small></span><kbd>3</kbd></button>
+          <button class="gesture-row" data-gesture="two" aria-label="伸出食指与中指，数字 2"><svg class="hand-icon"><use href="#i-two"/></svg><span>2 <small>食指、中指</small></span><kbd>2</kbd></button>
+          <button class="gesture-row" data-gesture="one" aria-label="伸出食指，数字 1"><svg class="hand-icon"><use href="#i-one"/></svg><span>1 <small>食指</small></span><kbd>1</kbd></button>
+          <button class="gesture-row" data-gesture="fist" aria-label="握拳，同时显示表白和名字，展开花瓣与星流"><svg class="hand-icon"><use href="#i-fist"/></svg><span><small>表白与名字</small></span><kbd>空格</kbd></button>
+        </div>
+        <p class="help-rule">3 → 2 → 1，再握拳；之后先张掌，再握拳。</p>
+        <p class="keyboard-help"><kbd>F</kbd> 全屏 <span>·</span> <kbd>H</kbd> 隐藏控件</p>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+    <noscript><p class="noscript-message">请启用 JavaScript。</p></noscript>
+  </main>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

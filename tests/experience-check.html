@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/favicon.svg"><title>开发检查 · 真实视频推理与体验状态</title>
+<style>
+  *{box-sizing:border-box}body{margin:28px auto;padding:0 20px;max-width:1120px;background:#160d15;color:#efcfdf;font:14px/1.6 system-ui}h1{font-size:22px;font-weight:500}p{color:#bb98ab}button{border:0;border-radius:24px;background:#efb3ce;color:#281020;padding:12px 28px;font:inherit;cursor:pointer}button:disabled{opacity:.45;cursor:wait}iframe{display:block;width:100%;height:min(64vw,620px);min-height:400px;border:1px solid #49313f;border-radius:12px;margin:20px 0}ol{padding-left:25px}li{padding:5px 0;white-space:pre-wrap;overflow-wrap:anywhere}.pass{color:#b8dbbc}.fail{color:#ffabb4}.running{color:#edc4a3}#summary{font-weight:600}#source{height:74px;max-width:140px;object-fit:contain;vertical-align:middle;margin-left:16px;background:#0b080b}code{color:#e8b5cf}
+</style>
+<h1>开发检查</h1>
+<p>测试视频源：Google MediaPipe 公开手部照片 → canvas.captureStream(30)，不是实体摄像头。iframe 加载正式页面，使用真实 MediaPipe Worker、手势分类、平滑和 UI；仅替换 getUserMedia。没有指定三指的真实测试照片，数字 3 仅通过正式演示帮助按钮触发，此项不验证真人三指识别。请保持本页在前台。</p>
+<button id="run">运行</button><img id="source" alt="当前测试视频照片" hidden />
+<p id="summary" role="status">尚未运行。通过本地开发服务器打开此页。</p>
+<ol id="results"></ol>
+<iframe id="app-frame" title="真实应用 · 照片生成的测试视频源" allow="autoplay; camera"></iframe>
+<script type="module">
+const $ = id => document.getElementById(id);
+const button = $('run'), frame = $('app-frame'), results = $('results'), summary = $('summary');
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+function assert(condition, message) { if (!condition) throw new Error(message); }
+async function deadline(promise, ms, label) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + '超时')), ms); })]); }
+  finally { clearTimeout(timer); }
+}
+
+button.addEventListener('click', async () => {
+  button.disabled = true;
+  results.replaceChildren();
+  summary.textContent = '准备测试视频与真实应用…';
+  summary.className = '';
+  let win, doc, drawTimer, media, originalGetUserMedia, previousSettings;
+  let settingsSaved = false, passed = 0, failed = 0;
+  const streams = [], images = {};
+  let source = null;
+  const status = () => win?.magicStatus;
+  const click = id => { const element = doc.getElementById(id); assert(element && !element.disabled, '控件不可用：' + id); element.click(); };
+  const appError = () => doc && !doc.getElementById('error-overlay').hidden ? doc.getElementById('error-message').textContent : '';
+  async function until(predicate, label, ms = 10000) {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      const error = appError();
+      if (error) throw new Error('应用错误：' + error);
+      if (predicate()) return;
+      await sleep(80);
+    }
+    throw new Error(label + '超时；状态：' + JSON.stringify(status()));
+  }
+  async function check(label, fn) {
+    const row = document.createElement('li');
+    row.className = 'running'; row.textContent = 'RUN · ' + label; results.append(row);
+    try {
+      await fn(); passed++; row.className = 'pass'; row.textContent = 'PASS · ' + label;
+    } catch (error) {
+      failed++; row.className = 'fail'; row.textContent = 'FAIL · ' + label + '\n' + error.message;
+      throw error;
+    }
+  }
+  async function hold(expected, ms = 1600) {
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      assert(!appError(), '应用错误：' + appError());
+      for (const [key, value] of Object.entries(expected)) assert(status()?.[key] === value, key + '意外变化：' + JSON.stringify(status()));
+      await sleep(80);
+    }
+  }
+  function overlayHasInk() {
+    const canvas = doc.getElementById('hand-overlay');
+    assert(canvas && canvas.width && canvas.height, '缺少手部骨架 canvas');
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    return pixels.some((value, index) => index % 4 === 3 && value > 0);
+  }
+  function assertCountdown(expected) {
+    assert(status().countdownComplete === (expected === null), '倒计时完成状态错误：' + JSON.stringify(status()));
+    assert(status().countdownExpected === expected, '倒计时下一步错误：' + JSON.stringify(status()));
+  }
+  async function setPhoto(file) {
+    // A short empty interval makes abrupt changes between unrelated photos reacquire a hand.
+    source = null; await sleep(380);
+    source = images[file];
+    $('source').src = source.src; $('source').hidden = false;
+  }
+  async function pose(file, scene, next, armed) {
+    await setPhoto(file);
+    await until(() => status()?.scene === scene && status()?.next === next && status()?.armed === armed && doc.getElementById('artwork').dataset.scene === scene, scene + '真实视频识别', 14000);
+    assert(status().mode === 'camera' && status().tracking, '应由真实相机识别链路驱动');
+  }
+  try {
+    await check('正式应用加载；照片测试视频源就绪', async () => {
+      for (const file of ['pointing_up', 'victory', 'fist', 'right_hands']) {
+        const image = new Image(); image.src = new URL('./fixtures/' + file + '.jpg', location.href).href;
+        await deadline(image.decode(), 10000, file + '照片加载'); images[file] = image;
+      }
+      // Run against the requested defaults, then restore this origin's previous preferences.
+      previousSettings = localStorage.getItem('little-cat-magic'); settingsSaved = true;
+      localStorage.removeItem('little-cat-magic');
+      await deadline(new Promise(resolve => { frame.onload = resolve; frame.src = new URL('../index.html', location.href).href; }), 15000, '正式页面加载');
+      win = frame.contentWindow; doc = frame.contentDocument;
+      await until(() => status()?.font === 'ready', '正式代码和中文字库加载', 20000);
+      assert(win.isSecureContext && win.navigator.mediaDevices, '需要 HTTPS 或 localhost');
+      const canvas = doc.createElement('canvas'); canvas.width = 640; canvas.height = 480; canvas.hidden = true; doc.body.append(canvas);
+      assert(typeof canvas.captureStream === 'function', '浏览器不支持 canvas.captureStream');
+      const ctx = canvas.getContext('2d');
+      const draw = () => {
+        ctx.fillStyle = '#111'; ctx.fillRect(0, 0, 640, 480);
+        if (source) {
+          const scale = Math.min(640 / source.naturalWidth, 480 / source.naturalHeight);
+          const width = source.naturalWidth * scale, height = source.naturalHeight * scale;
+          ctx.drawImage(source, (640 - width) / 2, (480 - height) / 2, width, height);
+        }
+      };
+      source = images.pointing_up; draw(); drawTimer = setInterval(draw, 1000 / 30);
+      media = win.navigator.mediaDevices;
+      originalGetUserMedia = Object.getOwnPropertyDescriptor(media, 'getUserMedia');
+      Object.defineProperty(media, 'getUserMedia', { configurable: true, value: async () => {
+        const stream = canvas.captureStream(30); streams.push(stream); return stream;
+      } });
+      assert(doc.getElementById('welcome').textContent.trim() === '进入', '入口应仅显示“进入”');
+    });
+    await check('实际进入按钮启动真实模型；摄像头预览默认显示', async () => {
+      click('start-button');
+      await until(() => status()?.mode === 'camera' && status()?.tracking && !status()?.starting, '模型启动', 45000);
+      assert(!doc.getElementById('camera-preview').hidden, '预览应默认显示');
+      assert(doc.getElementById('camera-video').srcObject === streams.at(-1), '视频必须使用照片生成的 MediaStream');
+    });
+    await check('真实照片 1 不跳过初始 3；骨架有像素，丢手后清空', async () => {
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'true' && overlayHasInk(), '真实手部骨架绘制', 14000);
+      assertCountdown('three');
+      await hold({ scene: 'scatter', next: 0, countdownComplete: false, countdownExpected: 'three' }, 1800);
+      source = null;
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'false' && !overlayHasInk(), '丢手清空骨架', 7000);
+    });
+    await check('倒计时开始前真实握拳被忽略，不重置或推进顺序', async () => {
+      const before = status();
+      await setPhoto('fist');
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'true' && overlayHasInk(), '真实握拳手部检测', 14000);
+      await hold({ scene: before.scene, next: 0, armed: before.armed, countdownComplete: false, countdownExpected: 'three' }, 1900);
+    });
+    await check('数字 3 通过正式演示帮助按钮触发（未使用三指照片）', async () => {
+      click('settings-button'); click('demo-setting');
+      await until(() => status()?.mode === 'demo' && !status()?.tracking, '倒计时切换演示');
+      assertCountdown('three');
+      assert(!doc.getElementById('demo-badge').hidden, '演示模式需要明确标记');
+      assert(doc.getElementById('hand-overlay').dataset.tracked === 'false' && !overlayHasInk(), '切到演示应清空真实骨架');
+      click('help-button'); doc.querySelector('[data-gesture="three"]').click();
+      await until(() => status()?.scene === 'three' && status()?.countdownExpected === 'two', '演示 3 推进倒计时');
+      assertCountdown('two');
+      assert(status().next === 0, '数字 3 不能消耗表白顺序');
+      doc.querySelector('[data-close="help-overlay"]').click();
+    });
+    await check('恢复真实相机后照片 2 推进倒计时，骨架恢复', async () => {
+      await setPhoto('victory');
+      click('settings-button'); click('camera-setting');
+      await until(() => status()?.mode === 'camera' && status()?.tracking && !status()?.starting, '恢复真实相机', 45000);
+      await until(() => status()?.scene === 'two' && status()?.countdownExpected === 'one' && doc.getElementById('artwork').dataset.scene === 'two', '真实数字 2', 14000);
+      assertCountdown('one');
+      assert(status().next === 0, '数字 2 不能消耗表白顺序');
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'true' && overlayHasInk(), '恢复手部骨架', 7000);
+    });
+    await check('数字 2 后的真实握拳仍被忽略，倒计时继续等待 1', async () => {
+      const before = status();
+      await setPhoto('fist');
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'true' && overlayHasInk(), '真实握拳手部检测', 14000);
+      await hold({ scene: 'two', next: 0, armed: before.armed, countdownComplete: false, countdownExpected: 'one' }, 1900);
+    });
+    await check('真实照片 1 完成 3 → 2 → 1，准备接受一次新握拳', async () => {
+      await pose('pointing_up', 'one', 0, true);
+      assertCountdown(null);
+    });
+    await check('1 后无需张掌，新握拳显示 I ♥ U；持续握拳不会连跳', async () => {
+      await pose('fist', 'love', 1, false);
+      assertCountdown(null);
+      assert(doc.getElementById('artwork').getAttribute('aria-label').includes('I ♥ U'), '应显示默认表白粒子目标');
+      await hold({ scene: 'love', next: 1, armed: false, tracking: true });
+    });
+    await check('隐藏预览后仍能真实识别数字；数字不解锁握拳', async () => {
+      click('hide-preview');
+      assert(doc.getElementById('camera-preview').hidden && status().tracking, '隐藏预览不能停止识别');
+      await pose('pointing_up', 'one', 1, false);
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'false' && !overlayHasInk(), '隐藏预览暂停骨架绘制', 7000);
+      click('settings-button'); click('preview-setting');
+      doc.querySelector('[data-close="settings-overlay"]').click();
+      assert(!doc.getElementById('camera-preview').hidden && status().tracking, '重新显示预览不能中断识别');
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'true' && overlayHasInk(), '重新显示预览恢复骨架', 7000);
+      click('hide-preview');
+      await until(() => doc.getElementById('hand-overlay')?.dataset.tracked === 'false' && !overlayHasInk(), '再次隐藏预览清空骨架', 7000);
+      await setPhoto('fist');
+      await hold({ scene: 'one', next: 1, armed: false, tracking: true }, 1900);
+    });
+    await check('真实张掌重新解锁；第二次握拳显示小猫', async () => {
+      await pose('right_hands', 'scatter', 1, true);
+      await pose('fist', 'name', 2, false);
+      assert(doc.getElementById('artwork').getAttribute('aria-label').includes('小猫'), '应显示中文名字粒子目标');
+    });
+    await check('相机暂停与重启保留顺序、拳锁及隐藏预览设置', async () => {
+      const oldStream = streams.at(-1), previousStreamCount = streams.length; click('camera-button');
+      await until(() => status()?.mode === 'paused' && !status()?.tracking, '暂停相机');
+      assert(oldStream.getTracks().every(track => track.readyState === 'ended'), '暂停应释放旧视频流');
+      assert(status().next === 2 && !status().armed, '暂停不能重置序列或解锁');
+      assertCountdown(null);
+      assert(doc.getElementById('hand-overlay').dataset.tracked === 'false' && !overlayHasInk(), '暂停应清空骨架');
+      click('camera-button');
+      await until(() => status()?.mode === 'camera' && status()?.tracking && !status()?.starting, '重启相机', 45000);
+      assert(streams.length === previousStreamCount + 1 && streams.at(-1) !== oldStream, '重启应取得新测试视频流');
+      assert(doc.getElementById('camera-preview').hidden, '重启应保留隐藏预览设置');
+      assertCountdown(null);
+      await hold({ scene: 'name', next: 2, armed: false, tracking: true }, 1900);
+    });
+    await check('再次张掌与握拳触发第三项惊喜', async () => {
+      await pose('right_hands', 'scatter', 2, true);
+      await pose('fist', 'surprise', 0, false);
+      await hold({ scene: 'surprise', next: 0, armed: false, tracking: true });
+    });
+    await check('切换演示保留顺序与拳锁；张掌后正确循环', async () => {
+      click('settings-button'); click('demo-setting');
+      await until(() => status()?.mode === 'demo' && !status()?.tracking, '切换演示');
+      assert(status().scene === 'surprise' && status().next === 0 && !status().armed, '切换演示不能重置或自动解锁');
+      assertCountdown(null);
+      assert(doc.getElementById('hand-overlay').dataset.tracked === 'false' && !overlayHasInk(), '演示模式应清空骨架');
+      assert(!doc.getElementById('demo-badge').hidden, '演示模式需要明确标记');
+      assert(streams.every(stream => stream.getTracks().every(track => track.readyState === 'ended')), '演示模式应释放所有视频流');
+      click('help-button');
+      doc.querySelector('[data-gesture="fist"]').click();
+      assert(status().scene === 'surprise' && status().next === 0 && !status().armed, '切换后直接握拳应仍被锁定');
+      doc.querySelector('[data-gesture="open"]').click(); doc.querySelector('[data-gesture="fist"]').click();
+      assert(status().scene === 'love' && status().next === 1 && !status().armed, '张掌后应从表白项重新循环');
+      doc.querySelector('[data-close="help-overlay"]').click();
+    });
+  } catch (error) {
+    console.error('Development experience check failed:', error);
+  } finally {
+    if (status()?.mode === 'camera') click('camera-button');
+    else if (status()?.starting) click('cancel-camera');
+    clearInterval(drawTimer);
+    streams.forEach(stream => stream.getTracks().forEach(track => track.stop()));
+    if (media) {
+      if (originalGetUserMedia) Object.defineProperty(media, 'getUserMedia', originalGetUserMedia);
+      else delete media.getUserMedia;
+    }
+    if (settingsSaved) {
+      if (previousSettings === null) localStorage.removeItem('little-cat-magic');
+      else localStorage.setItem('little-cat-magic', previousSettings);
+    }
+    summary.textContent = `${passed} PASS / ${failed} FAIL。${failed ? '遇到失败，后续步骤未执行。' : '真实视频推理与体验状态检查完成。'}测试视频流已停止；未使用实体摄像头。`;
+    summary.className = failed ? 'fail' : 'pass';
+    button.disabled = false;
+  }
+});
+</script>
+</html>

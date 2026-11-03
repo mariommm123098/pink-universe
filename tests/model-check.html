@@ -1,0 +1,35 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><link rel="icon" href="/favicon.svg"><title>本地模型与字体检查</title><base href="/"><style>body{background:#190e19;color:#f3c7de;font:14px system-ui;max-width:960px;margin:45px auto;padding:20px}button{background:#f3c7de;color:#331427;border:0;border-radius:20px;padding:15px 25px;cursor:pointer}pre{white-space:pre-wrap;background:#271523;padding:20px;border:1px solid #75465d;border-radius:10px;font-size:12px}img{height:130px;width:auto;border-radius:9px}canvas{display:block;width:600px;max-width:100%;background:#120910;margin:20px 0}.row{display:flex;gap:16px;align-items:center;margin-top:20px}.pass{color:#bad9b2}.fail{color:#ffa8ad}</style>
+<h1>真实手部模型 · 本地资源检查</h1><p>使用 Google MediaPipe 的公开测试照片运行真正的 WASM 推理。此页面不使用或上传摄像头画面。</p><button id="run">运行模型与中文字体检查</button><p id="summary">尚未运行</p><canvas id="font-proof" width="1200" height="480"></canvas><div id="results"></div>
+<script type="module">
+import{classifyHand}from'/src/gestures.js';import{loadParticleFont,textTargets}from'/src/shapes.js';
+const run=document.querySelector('#run'),results=document.querySelector('#results'),summary=document.querySelector('#summary');
+function line(text,pass){const p=document.createElement('pre');p.textContent=text;p.className=pass?'pass':'fail';results.appendChild(p);}
+run.onclick=async()=>{
+ run.disabled=true;results.replaceChildren();let worker;
+ try{
+  summary.textContent='加载模型与字体中…';
+  await loadParticleFont();const coords=textTargets('小猫',14000,{maxWidth:8,maxHeight:3.2});
+  if(!coords.every(Number.isFinite))throw Error('Invalid text targets');
+  const canvas=document.querySelector('#font-proof'),ctx=canvas.getContext('2d');ctx.clearRect(0,0,1200,480);ctx.fillStyle='#f3accb';
+  for(let i=0;i<coords.length;i+=3){ctx.beginPath();ctx.arc(600+coords[i]*120,240-coords[i+1]*120,1,0,Math.PI*2);ctx.fill();}
+  line('PASS: 本地全字库已载入；「小猫」生成 14,000 个有限的粒子坐标。',true);
+  worker=new Worker('/hand-tracking.worker.js');
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Model initialization timed out')),30000);worker.onmessage=({data})=>{if(data.type==='ready'){clearTimeout(timer);resolve();}if(data.type==='error'){clearTimeout(timer);reject(Error(data.message));}};worker.onerror=e=>reject(Error(e.message));worker.postMessage({type:'init',wasmRoot:new URL('/mediapipe/wasm',location.href).href,modelPath:new URL('/models/hand_landmarker.task',location.href).href});});
+  line('PASS: 与正式页面相同的 classic Web Worker / CPU WASM HandLandmarker 初始化成功。',true);
+  let all=true, timestamp=1000;
+  for(const [file,expected]of [['pointing_up.jpg','one'],['victory.jpg','two'],['fist.jpg','fist'],['right_hands.jpg','open'],['left_hands.jpg','open'],['pointing_up_rotated.jpg','one']]){
+   const image=new Image();image.src='/tests/fixtures/'+file;await image.decode();const row=document.createElement('div');row.className='row';row.appendChild(image);results.appendChild(row);
+   let data;
+   for(let attempt=0;attempt<3;attempt++){
+    const bitmap=await createImageBitmap(image);
+    data=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Inference timed out')),15000);worker.onmessage=({data})=>{clearTimeout(timer);resolve(data);};worker.postMessage({type:'frame',frame:bitmap,timestamp:timestamp+=1000},[bitmap]);});
+   }
+   if(data.type!=='result')throw Error(data.message||'Inference failed');
+   const result=classifyHand(data.landmarks,data.world,image.naturalWidth/image.naturalHeight);const pass=result.gesture===expected&&result.confidence>=.68;all&&=pass;
+   line(JSON.stringify({file,expected,actual:result.gesture,confidence:result.confidence,landmarks:data.landmarks?.length,inferenceMs:Math.round(data.elapsed),fingers:result.fingers,thumbPinkyGap:result.thumbPinkyGap,thumbRadius:result.thumbRadius},null,2),pass);
+  }
+  summary.textContent=all?'全部通过：真实模型推理、1 / 2 / 握拳 / 张开、中文粒子字形。':'模型已真实运行，部分手势阈值需要检查。';summary.className=all?'pass':'fail';
+ }catch(error){summary.textContent='失败：'+error.message;summary.className='fail';line(error.stack,false);}
+ finally{worker?.terminate();run.disabled=false;}
+};
+</script></html>
